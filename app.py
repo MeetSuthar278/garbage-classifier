@@ -24,7 +24,6 @@ from efficientnet_pytorch import EfficientNet
 from PIL import Image, ImageFilter
 import cv2
 from flask import Flask, request, jsonify, send_from_directory
-from torch.cuda.amp import autocast
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 CLASSES      = ['Black', 'Blue', 'Green', 'TTR']
@@ -84,7 +83,6 @@ class GradCAM:
         self._register_hooks()
 
     def _register_hooks(self):
-        # Last conv block in EfficientNet-B0
         target_layer = self.model.image_encoder._blocks[-1]
 
         def forward_hook(module, input, output):
@@ -94,7 +92,7 @@ class GradCAM:
             self.gradients = grad_out[0].detach()
 
         target_layer.register_forward_hook(forward_hook)
-        target_layer.register_backward_hook(backward_hook)
+        target_layer.register_full_backward_hook(backward_hook)  # fixed deprecation warning
 
     def generate(self, image_tensor, input_ids, attention_mask, class_idx):
         self.model.zero_grad()
@@ -104,12 +102,10 @@ class GradCAM:
         score  = output[0, class_idx]
         score.backward()
 
-        # Pool gradients across channels
-        weights = self.gradients.mean(dim=[2, 3], keepdim=True)   # (1, C, 1, 1)
-        cam     = (weights * self.activations).sum(dim=1).squeeze() # (H, W)
+        weights = self.gradients.mean(dim=[2, 3], keepdim=True)
+        cam     = (weights * self.activations).sum(dim=1).squeeze()
         cam     = torch.relu(cam).cpu().numpy()
 
-        # Normalize + resize to 224×224
         if cam.max() > 0:
             cam = cam / cam.max()
         cam = cv2.resize(cam, (IMAGE_SIZE, IMAGE_SIZE))
@@ -141,6 +137,7 @@ if os.path.exists(MODEL_PATH):
 else:
     print(f'⚠ WARNING: {MODEL_PATH} not found — using random weights!')
 
+model.eval()  # always keep in eval mode
 grad_cam = GradCAM(model)
 
 val_transform = transforms.Compose([
@@ -194,10 +191,10 @@ def predict():
     input_ids      = encoding['input_ids'].to(DEVICE)
     attention_mask = encoding['attention_mask'].to(DEVICE)
 
-    # Forward pass
-    model.eval()
+    # ── Forward pass (no gradients needed here) ──
+    device_type = 'cuda' if torch.cuda.is_available() else 'cpu'
     with torch.no_grad():
-        with autocast():
+        with torch.amp.autocast(device_type):                  # fixed deprecation
             logits = model(img_tensor, input_ids, attention_mask)
         probs = torch.softmax(logits.float(), dim=1).squeeze(0)
 
@@ -206,17 +203,19 @@ def predict():
     confidence = float(probs[pred_idx]) * 100
     probs_dict = {cls: round(float(probs[i]) * 100, 2) for i, cls in enumerate(CLASSES)}
 
-    # Grad-CAM (needs gradients — run outside no_grad)
-    img_tensor_gc  = val_transform(image).unsqueeze(0).to(DEVICE)
-    enc_gc         = tokenizer(text, max_length=MAX_TEXT_LEN, padding='max_length',
-                               truncation=True, return_tensors='pt')
-    ids_gc         = enc_gc['input_ids'].to(DEVICE)
-    mask_gc        = enc_gc['attention_mask'].to(DEVICE)
+    # ── Grad-CAM (needs gradients, but keep BN in eval mode) ──
+    img_tensor_gc = val_transform(image).unsqueeze(0).to(DEVICE)
+    enc_gc        = tokenizer(text, max_length=MAX_TEXT_LEN, padding='max_length',
+                              truncation=True, return_tensors='pt')
+    ids_gc        = enc_gc['input_ids'].to(DEVICE)
+    mask_gc       = enc_gc['attention_mask'].to(DEVICE)
 
-    model.train()   # enable gradients through BN layers properly
-    cam     = grad_cam.generate(img_tensor_gc, ids_gc, mask_gc, pred_idx)
-    cam_b64 = grad_cam.overlay(image, cam)
+    # Stay in eval() so BatchNorm works with batch_size=1
+    # Just enable grad computation via torch.enable_grad()
     model.eval()
+    with torch.enable_grad():
+        cam = grad_cam.generate(img_tensor_gc, ids_gc, mask_gc, pred_idx)
+    cam_b64 = grad_cam.overlay(image, cam)
 
     # Thumbnail
     thumb_b64 = encode_pil(image)
@@ -235,13 +234,13 @@ def predict():
     history.appendleft(entry)
 
     return jsonify({
-        'prediction':   pred_class,
-        'confidence':   round(confidence, 2),
+        'prediction':    pred_class,
+        'confidence':    round(confidence, 2),
         'probabilities': probs_dict,
-        'bin_info':     BIN_INFO[pred_class],
-        'text_used':    text,
-        'thumbnail':    thumb_b64,
-        'gradcam':      cam_b64,
+        'bin_info':      BIN_INFO[pred_class],
+        'text_used':     text,
+        'thumbnail':     thumb_b64,
+        'gradcam':       cam_b64,
     })
 
 
