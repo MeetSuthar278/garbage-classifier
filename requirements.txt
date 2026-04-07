@@ -1,0 +1,8 @@
+flask>=3.0
+torch>=2.0
+torchvision>=0.15
+transformers>=4.35
+efficientnet_pytorch>=0.7
+Pillow>=10.0
+opencv-python-headless>=4.8
+numpy>=1.24
