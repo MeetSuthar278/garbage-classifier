@@ -2,7 +2,7 @@
 
 > A deep learning web app that classifies garbage into the correct waste bin using both image and text understanding.
 
-🔗 **Live Demo:** [YOUR-HUGGINGFACE-LINK-HERE](https://YOUR-HUGGINGFACE-LINK-HERE)
+🔗 **Live Demo:** [Click Here](https://huggingface.co/spaces/Meet278/garbage-classifier)
 
 ---
 
@@ -75,39 +75,3 @@ The two feature vectors are **concatenated** and passed through a fusion head (2
 
 ---
 
-## 🚀 Run Locally
-
-```bash
-# 1. Clone the repo
-git clone https://github.com/MeetSuthar278/garbage-classifier.git
-cd garbage-classifier
-
-# 2. Install dependencies
-pip install -r requirements.txt
-
-# 3. Add your model weights
-# Place best_model.pth in the root folder
-
-# 4. Run
-python app.py
-# → open http://localhost:7860
-```
-
----
-
-## 📁 Project Structure
-
-```
-garbage-classifier/
-├── app.py                  # Flask backend + Grad-CAM logic
-├── requirements.txt        # Python dependencies
-├── Dockerfile              # For Hugging Face Spaces deployment
-└── static/
-    └── index.html          # Frontend (classify, history, model card)
-```
-
----
-
-## 👨‍💻 Author
-
-**Meet Suthar** — Final Project, Deep Learning Course
